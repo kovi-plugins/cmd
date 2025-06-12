@@ -1,0 +1,13 @@
+[package]
+name = "kovi-plugin-cmd"
+version = "0.1.2"
+edition = "2021"
+description = "Kovi 的管理插件，通过消息命令配置 Kovi"
+keywords = ["kovi", "kovi-plugin"]
+license = "MPL-2.0"
+authors = ["Threkork <threkork@hotmail.com>"]
+
+[dependencies]
+kovi = ">=0.11.5"
+serde = { version = "1", features = ["derive"] }
+sysinfo = "0.33.0"
