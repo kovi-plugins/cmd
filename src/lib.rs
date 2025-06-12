@@ -2,7 +2,8 @@ use cmd::{AccControlCmd, CmdSetAccessControlList, HelpItem, KoviArgs, KoviCmd, P
 use kovi::{
     bot::{runtimebot::kovi_api::SetAccessControlList, AccessControlMode},
     error::BotError,
-    log, serde_json, MsgEvent, PluginBuilder as P, RuntimeBot,
+    event::AdminMsgEvent,
+    log, serde_json, PluginBuilder as P, RuntimeBot,
 };
 use std::{
     sync::Arc,
@@ -106,7 +107,7 @@ off: 移除本群到列表
 add <friend | group> [id]: 添加多个
 remove <friend | group> [id]: 移除多个"#;
 
-fn help(e: &MsgEvent, item: HelpItem) {
+fn help(e: &AdminMsgEvent, item: HelpItem) {
     match item {
         HelpItem::Plugin => {
             e.reply(HELP_PLUGIN);
@@ -120,7 +121,7 @@ fn help(e: &MsgEvent, item: HelpItem) {
     }
 }
 
-async fn status(e: &MsgEvent, bot: &RuntimeBot, start_time: &u64) {
+async fn status(e: &AdminMsgEvent, bot: &RuntimeBot, start_time: &u64) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -209,7 +210,7 @@ async fn status(e: &MsgEvent, bot: &RuntimeBot, start_time: &u64) {
     e.reply(reply);
 }
 
-fn acc(e: &MsgEvent, bot: &RuntimeBot, plugin_name: &str, acc_cmd: AccControlCmd) {
+fn acc(e: &AdminMsgEvent, bot: &RuntimeBot, plugin_name: &str, acc_cmd: AccControlCmd) {
     let plugin_name = is_not_empty_or_more_times_and_reply(e, bot, plugin_name);
 
     let plugin_name = match plugin_name {
@@ -357,7 +358,7 @@ fn process_ids(
     is_add: bool,
     plugin_name: &str,
     bot: &RuntimeBot,
-    e: &MsgEvent,
+    e: &AdminMsgEvent,
 ) {
     let mut vec_i64: Vec<i64> = Vec::new();
 
@@ -394,7 +395,7 @@ fn process_ids(
     }
 }
 
-fn plugin_start(e: &MsgEvent, bot: &RuntimeBot, name: &str) {
+fn plugin_start(e: &AdminMsgEvent, bot: &RuntimeBot, name: &str) {
     let name = is_not_empty_or_more_times_and_reply(e, bot, name);
 
     let name = match name {
@@ -421,7 +422,7 @@ fn plugin_start(e: &MsgEvent, bot: &RuntimeBot, name: &str) {
     }
 }
 
-fn plugin_stop(e: &MsgEvent, bot: &RuntimeBot, name: &str) {
+fn plugin_stop(e: &AdminMsgEvent, bot: &RuntimeBot, name: &str) {
     let name = is_not_empty_or_more_times_and_reply(e, bot, name);
 
     let name = match name {
@@ -448,7 +449,7 @@ fn plugin_stop(e: &MsgEvent, bot: &RuntimeBot, name: &str) {
     }
 }
 
-async fn plugin_restart(e: &MsgEvent, bot: &RuntimeBot, name: &str) {
+async fn plugin_restart(e: &AdminMsgEvent, bot: &RuntimeBot, name: &str) {
     let name = is_not_empty_or_more_times_and_reply(e, bot, name);
 
     let name = match name {
@@ -475,7 +476,7 @@ async fn plugin_restart(e: &MsgEvent, bot: &RuntimeBot, name: &str) {
     }
 }
 
-fn plugin_status(e: &MsgEvent, bot: &RuntimeBot) {
+fn plugin_status(e: &AdminMsgEvent, bot: &RuntimeBot) {
     let plugin_info = bot.get_plugin_info().unwrap();
     if plugin_info.is_empty() {
         e.reply("🔎 插件列表为空");
@@ -496,7 +497,7 @@ fn plugin_status(e: &MsgEvent, bot: &RuntimeBot) {
 
 /// 检查插件名是否为空或多个插件名，返回第一个插件名或None，顺带回复
 fn is_not_empty_or_more_times_and_reply(
-    e: &MsgEvent,
+    e: &AdminMsgEvent,
     bot: &RuntimeBot,
     name: &str,
 ) -> Option<String> {
