@@ -1,31 +1,64 @@
 use cmd::{AccControlCmd, CmdSetAccessControlList, HelpItem, KoviArgs, KoviCmd, PluginCmd};
 use kovi::{
-    bot::{runtimebot::kovi_api::SetAccessControlList, AccessControlMode},
+    PluginBuilder as P, RuntimeBot,
+    bot::{AccessControlMode, runtimebot::kovi_api::SetAccessControlList},
     error::BotError,
     event::AdminMsgEvent,
-    log, serde_json, PluginBuilder as P, RuntimeBot,
+    log, serde_json,
 };
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 mod cmd;
 
-// #[derive(Debug, serde::Deserialize, serde::Serialize)]
-// struct CMDInfo {
-//     cmd_start_with: String,
-// }
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, Default)]
+struct Info {
+    start_time: u64,
+    accept_msg: u64,
+    send_msg: u64,
+}
+impl Info {
+    fn accept(&mut self) {
+        self.accept_msg += 1;
+    }
+    fn send(&mut self) {
+        self.send_msg += 1;
+    }
+}
 
 #[kovi::plugin]
 async fn main() {
-    let start_time = SystemTime::now()
+    let start = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    let start_time = Arc::new(start_time);
+    let info = Arc::new(Mutex::new(Info {
+        start_time: start,
+        accept_msg: 0,
+        send_msg: 0,
+    }));
+
+    let info_clone = info.clone();
+    P::on_msg(move |_| {
+        let info_clone = info_clone.clone();
+        async move {
+            let mut info = info_clone.lock().unwrap();
+            info.accept();
+        }
+    });
+
+    let info_clone = info.clone();
+    P::on(move |_: Arc<kovi::event::MsgSendFromKoviEvent>| {
+        let info_clone = info_clone.clone();
+        async move {
+            let mut info = info_clone.lock().unwrap();
+            info.send();
+        }
+    });
 
     let bot = P::get_runtime_bot();
     // let data_path = bot.get_data_path();
@@ -37,7 +70,7 @@ async fn main() {
     P::on_admin_msg(move |e| {
         let bot = bot.clone();
         // let cmd = cmd.clone();
-        let start_time = start_time.clone();
+        let info = info.clone();
         async move {
             let text = if let Some(v) = e.borrow_text() {
                 v
@@ -72,7 +105,7 @@ async fn main() {
                         plugin_restart(&e, &bot, &name).await;
                     }
                 },
-                KoviCmd::Status => status(&e, &bot, &start_time).await,
+                KoviCmd::Status => status(&e, &bot, info).await,
                 KoviCmd::Acc { name, acc_cmd } => acc(&e, &bot, &name, acc_cmd),
             }
         }
@@ -121,13 +154,15 @@ fn help(e: &AdminMsgEvent, item: HelpItem) {
     }
 }
 
-async fn status(e: &AdminMsgEvent, bot: &RuntimeBot, start_time: &u64) {
+async fn status(e: &AdminMsgEvent, bot: &RuntimeBot, info: Arc<Mutex<Info>>) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    let duration = now - *start_time;
+    let info = { *info.lock().unwrap() };
+
+    let duration = now - info.start_time;
 
     // 计算运行时间
     let days = duration / (24 * 3600);
@@ -181,29 +216,33 @@ async fn status(e: &AdminMsgEvent, bot: &RuntimeBot, start_time: &u64) {
 
     let onebot_info_str = match onebot_info {
         Some(v) => {
-            let mut msg = "服务端:\n  ".to_string();
+            let mut msg = "".to_string();
 
             if let Some(app_name) = v.app_name {
                 msg.push_str(&app_name);
             }
             if let Some(app_version) = v.app_version {
-                msg.push_str(&format!("（{}）", app_version));
+                msg.push_str(&format!("({})", app_version));
             }
 
             msg
         }
-        None => "服务端: 信息获取失败".to_string(),
+        None => "信息获取失败".to_string(),
     };
 
     let plugin_info_len = plugin_info.len();
 
+    let accept_msg = info.accept_msg;
+    let send_msg = info.send_msg;
+
     let reply = format!(
         "┄ 📑 状态 ┄\n\
         🕑 运行时间: {time_str}\n\
+        ✉️ 消息状况: 收发{accept_msg}/{send_msg}\n\
         📦 插件数量: {plugin_info_len} 启用 {plugin_start_len} 个\n\
         🔋 内存使用: {self_memory_usage:.2}MB\n\
         💻 系统内存:\n  {:.2}GB/{:.2}GB({:.0}%)\n\
-        🔗 {}",
+        🔗 服务端:\n  {}",
         used_memory, total_memory, memory_usage_percent, onebot_info_str
     );
 
@@ -495,7 +534,7 @@ fn plugin_status(e: &AdminMsgEvent, bot: &RuntimeBot) {
     e.reply(msg.trim());
 }
 
-/// 检查插件名是否为空或多个插件名，返回第一个插件名或None，顺带回复
+/// 检查插件名是否为空或多个插件名并排除掉全匹配，返回第一个插件名或None，顺带回复
 fn is_not_empty_or_more_times_and_reply(
     e: &AdminMsgEvent,
     bot: &RuntimeBot,
@@ -513,6 +552,12 @@ fn is_not_empty_or_more_times_and_reply(
         e.reply("🔎 插件列表为空");
         return None;
     } else if names.len() > 1 {
+        // 检测是否有全匹配
+        let full_name = names.iter().find(|n| n == &name);
+        if let Some(full_name) = full_name {
+            return Some(full_name.clone());
+        }
+
         e.reply(format!("┄ 🔎 寻找到多个插件 ┄\n{}", names.join("\n")));
         return None;
     }
