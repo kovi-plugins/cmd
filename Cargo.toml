@@ -1,13 +1,20 @@
 [package]
 name = "kovi-plugin-cmd"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Kovi 的管理插件，通过消息命令配置 Kovi"
 keywords = ["kovi", "kovi-plugin"]
 license = "MPL-2.0"
 authors = ["ThriceCola <thricecola@hotmail.com>"]
 
+[features]
+onebot = ["kovi-onebot"]
+milky = ["kovi-milky"]
+
 [dependencies]
-kovi = ">=0.12.0"
+kovi = ">=0.13"
+kovi-onebot = { version = ">=0.13", optional = true }
+kovi-milky = { version = ">=0.13", optional = true }
+
 serde = { version = "1", features = ["derive"] }
-sysinfo = "0.33.0"
+sysinfo = "0.39.0"

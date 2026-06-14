@@ -1,16 +1,28 @@
+#[cfg(any(feature = "onebot", feature = "milky"))]
 use cmd::{AccControlCmd, CmdSetAccessControlList, HelpItem, KoviArgs, KoviCmd, PluginCmd};
-use kovi::{
-    PluginBuilder as P, RuntimeBot,
-    bot::{AccessControlMode, runtimebot::kovi_api::SetAccessControlList},
-    error::BotError,
-    event::AdminMsgEvent,
-    log, serde_json,
-};
-use std::{
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use kovi::bot::AccessControlMode;
+use kovi::bot::runtimebot::kovi_api::SetAccessControlList;
+use kovi::error::BotError;
+use kovi::event::MessageEventTrait;
+use kovi::event::id::ID;
+use kovi::log;
+#[cfg(any(feature = "onebot", feature = "milky"))]
+use kovi::{PluginBuilder as P, RuntimeBot, serde_json};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessesToUpdate, System};
+
+#[cfg(not(any(feature = "onebot", feature = "milky")))]
+compile_error!("请至少启用一个协议 feature: \"onebot\" 或 \"milky\"");
+
+#[cfg(all(feature = "onebot", feature = "milky"))]
+compile_error!("请只启用一个协议 feature: \"onebot\" 或 \"milky\"");
+
+#[cfg(feature = "onebot")]
+use kovi_onebot::*;
+
+#[cfg(feature = "milky")]
+use kovi_milky::*;
 
 mod cmd;
 
@@ -29,6 +41,7 @@ impl Info {
     }
 }
 
+#[cfg(any(feature = "onebot", feature = "milky"))]
 #[kovi::plugin]
 async fn main() {
     let start = SystemTime::now()
@@ -52,7 +65,7 @@ async fn main() {
     });
 
     let info_clone = info.clone();
-    P::on(move |_: Arc<kovi::event::MsgSendFromKoviEvent>| {
+    P::on(move |_: Arc<MsgSendFromKoviEvent>| {
         let info_clone = info_clone.clone();
         async move {
             let mut info = info_clone.lock().unwrap();
@@ -200,35 +213,7 @@ async fn status(e: &AdminMsgEvent, bot: &RuntimeBot, info: Arc<Mutex<Info>>) {
 
     let plugin_start_len = plugin_info.iter().filter(|v| v.enabled).count();
 
-    #[derive(Debug, serde::Deserialize, serde::Serialize)]
-    struct OnebotInfo {
-        app_name: Option<String>,
-        app_version: Option<String>,
-    }
-
-    let onebot_info: Option<OnebotInfo> = match bot.get_version_info().await {
-        Ok(v) => match serde_json::from_value::<OnebotInfo>(v.data) {
-            Ok(v) => Some(v),
-            Err(_) => None,
-        },
-        Err(_) => None,
-    };
-
-    let onebot_info_str = match onebot_info {
-        Some(v) => {
-            let mut msg = "".to_string();
-
-            if let Some(app_name) = v.app_name {
-                msg.push_str(&app_name);
-            }
-            if let Some(app_version) = v.app_version {
-                msg.push_str(&format!("({})", app_version));
-            }
-
-            msg
-        }
-        None => "信息获取失败".to_string(),
-    };
+    let server_info_str = get_server_info(bot).await;
 
     let plugin_info_len = plugin_info.len();
 
@@ -243,10 +228,79 @@ async fn status(e: &AdminMsgEvent, bot: &RuntimeBot, info: Arc<Mutex<Info>>) {
         🔋 内存使用: {self_memory_usage:.2}MB\n\
         💻 系统内存:\n  {:.2}GB/{:.2}GB({:.0}%)\n\
         🔗 服务端:\n  {}",
-        used_memory, total_memory, memory_usage_percent, onebot_info_str
+        used_memory, total_memory, memory_usage_percent, server_info_str
     );
 
     e.reply(reply);
+}
+
+#[cfg(feature = "onebot")]
+async fn get_server_info(bot: &RuntimeBot) -> String {
+    use kovi_onebot::OnebotTrait;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct OnebotInfo {
+        app_name: Option<String>,
+        app_version: Option<String>,
+    }
+
+    match bot.get_version_info().await {
+        Ok(v) => match serde_json::from_value::<OnebotInfo>(v.data) {
+            Ok(info) => {
+                let mut msg = String::new();
+                if let Some(name) = info.app_name {
+                    msg.push_str(&name);
+                }
+                if let Some(ver) = info.app_version {
+                    msg.push_str(&format!("({})", ver));
+                }
+                if msg.is_empty() {
+                    "信息获取失败".to_string()
+                } else {
+                    msg
+                }
+            }
+            Err(_) => "信息获取失败".to_string(),
+        },
+        Err(_) => "信息获取失败".to_string(),
+    }
+}
+
+#[cfg(feature = "milky")]
+async fn get_server_info(bot: &RuntimeBot) -> String {
+    use kovi_milky::MilkySystemApi;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct ImplInfo {
+        impl_name: Option<String>,
+        impl_version: Option<String>,
+        qq_protocol_version: Option<String>,
+        qq_protocol_type: Option<String>,
+        milky_version: Option<String>,
+    }
+
+    match bot.get_impl_info().await {
+        Ok(v) => match serde_json::from_value::<ImplInfo>(v.data) {
+            Ok(info) => {
+                let name = info.impl_name.unwrap_or_else(|| "未知".to_string());
+                let ver = info.impl_version.unwrap_or_default();
+                let qq_ver = info.qq_protocol_version.unwrap_or_default();
+                let qq_type = info.qq_protocol_type.unwrap_or_default();
+                let milky_ver = info.milky_version.unwrap_or_default();
+
+                let mut msg = format!("{} ({})", name, ver);
+                if !qq_ver.is_empty() || !qq_type.is_empty() {
+                    msg.push_str(&format!("\n  QQ: {} {}", qq_type, qq_ver));
+                }
+                if !milky_ver.is_empty() {
+                    msg.push_str(&format!("\n  Milky: v{}", milky_ver));
+                }
+                msg
+            }
+            Err(_) => "信息获取失败".to_string(),
+        },
+        Err(_) => "信息获取失败".to_string(),
+    }
 }
 
 fn acc(e: &AdminMsgEvent, bot: &RuntimeBot, plugin_name: &str, acc_cmd: AccControlCmd) {
@@ -268,7 +322,7 @@ fn acc(e: &AdminMsgEvent, bot: &RuntimeBot, plugin_name: &str, acc_cmd: AccContr
             }
             Err(err) => match err {
                 BotError::PluginNotFound(_) => {
-                    e.reply(format!("🔎 插件{}不存在", &plugin_name));
+                    e.reply(format!("🔎 插件{}不存在", plugin_name));
                 }
                 BotError::RefExpired => {
                     panic!("CMD: Bot RefExpired");
@@ -281,7 +335,7 @@ fn acc(e: &AdminMsgEvent, bot: &RuntimeBot, plugin_name: &str, acc_cmd: AccContr
             }
             Err(err) => match err {
                 BotError::PluginNotFound(_) => {
-                    e.reply(format!("🔎 插件{}不存在", &plugin_name));
+                    e.reply(format!("🔎 插件{}不存在", plugin_name));
                 }
                 BotError::RefExpired => {
                     panic!("CMD: Bot RefExpired");
@@ -354,26 +408,19 @@ fn acc(e: &AdminMsgEvent, bot: &RuntimeBot, plugin_name: &str, acc_cmd: AccContr
                 return;
             }
 
+            let group_id = e.get_group_id().unwrap();
             let set_access = if boo {
-                SetAccessControlList::Add(e.group_id.unwrap())
+                SetAccessControlList::Add(group_id.into())
             } else {
-                SetAccessControlList::Remove(e.group_id.unwrap())
+                SetAccessControlList::Remove(group_id.into())
             };
 
             match bot.set_plugin_access_control_list(&plugin_name, true, set_access) {
                 Ok(_) => {
                     let msg = if boo {
-                        format!(
-                            "✅ 插件{}访问控制已添加{}",
-                            plugin_name,
-                            e.group_id.unwrap()
-                        )
+                        format!("✅ 插件{}访问控制已添加{}", plugin_name, group_id)
                     } else {
-                        format!(
-                            "✅ 插件{}访问控制已移除{}",
-                            plugin_name,
-                            e.group_id.unwrap()
-                        )
+                        format!("✅ 插件{}访问控制已移除{}", plugin_name, group_id)
                     };
                     e.reply(msg);
                 }
@@ -399,12 +446,12 @@ fn process_ids(
     bot: &RuntimeBot,
     e: &AdminMsgEvent,
 ) {
-    let mut vec_i64: Vec<i64> = Vec::new();
+    let mut vec_id: Vec<ID> = Vec::new();
 
     for str in v {
-        match str.parse() {
+        match str.parse::<i64>() {
             Ok(v) => {
-                vec_i64.push(v);
+                vec_id.push(ID::new(v));
             }
             Err(_) => {
                 e.reply("❎ 设置失败");
@@ -414,9 +461,9 @@ fn process_ids(
     }
 
     let vec_i64 = if is_add {
-        SetAccessControlList::Adds(vec_i64)
+        SetAccessControlList::Adds(vec_id)
     } else {
-        SetAccessControlList::Removes(vec_i64)
+        SetAccessControlList::Removes(vec_id)
     };
 
     match bot.set_plugin_access_control_list(plugin_name, is_group, vec_i64) {
