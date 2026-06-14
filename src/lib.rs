@@ -16,7 +16,7 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 compile_error!("请至少启用一个协议 feature: \"onebot\" 或 \"milky\"");
 
 #[cfg(all(feature = "onebot", feature = "milky"))]
-compile_error!("请只启用一个协议 feature: \"onebot\" 或 \"milky\"");
+compile_error!("不能同时启用 onebot 和 milky feature");
 
 #[cfg(feature = "onebot")]
 use kovi_onebot::*;

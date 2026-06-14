@@ -8,6 +8,7 @@ license = "MPL-2.0"
 authors = ["ThriceCola <thricecola@hotmail.com>"]
 
 [features]
+default = []
 onebot = ["kovi-onebot"]
 milky = ["kovi-milky"]
 
@@ -18,3 +19,7 @@ kovi-milky = { version = ">=0.13", optional = true }
 
 serde = { version = "1", features = ["derive"] }
 sysinfo = "0.39.0"
+
+
+[package.metadata.docs.rs]
+features = ["milky"]
